@@ -99,23 +99,29 @@ def _format_inr(val: float | Decimal) -> str:
         return f"₹{val}"
 
 
-def _user_name(user) -> str:
+def _user_name(user, detected_name: str | None = None) -> str:
+    if detected_name:
+        return detected_name.strip().title()
     if not user:
         return ""
     first = getattr(user, "first_name", "") or ""
-    return first.strip() or (user.username if getattr(user, "username", None) else "")
+    name = first.strip() or (user.username if getattr(user, "username", None) else "")
+    if name.lower() in {"admin", "administrator", "root"}:
+        return ""
+    return name.title()
 
 
-def _call_name(user) -> str:
-    name = _user_name(user)
-    return f" {name}" if name else ""
+def _call_name(user, detected_name: str | None = None) -> str:
+    name = _user_name(user, detected_name)
+    return f", {name}" if name else ""
 
 
 def _speak_text(reply: str) -> str:
     text = re.sub(r"[*_`#]", "", reply or "")
     text = re.sub(r"\[(.*?)\]\(.*?\)", r"\1", text)
     text = text.replace("₹", "rupees ")
-    text = re.sub(r"[•⚠️✅🤝💼🏛️📈👥💳🏷️📊🔍📋📅🗓️💰🏦📄]", " ", text)
+    text = re.sub(r"[•⚠️✅🤝💼🏛️📈👥💳🏷️📊🔍📋📅🗓️💰🏦📄💡]", " ", text)
+    text = re.sub(r"\n+", ". ", text)
     text = re.sub(r"\s+", " ", text).strip()
     if len(text) > 900:
         text = text[:880].rsplit(" ", 1)[0] + "."
@@ -284,9 +290,16 @@ def _parse_query_slots(query: str, default_year: int) -> dict[str, Any]:
     if re.search(r"\b(who are you|what are you|your name|introduce yourself|what can you do)\b", ql):
         slots["intent"] = "identity"
         return slots
-    if re.fullmatch(r"(hello|hi|hey|good morning|good afternoon|good evening|greetings|howdy)[!., ]*", ql):
+    
+    # Catch conversational greetings and introductions like "Hello, I am Chetan", "Hi I'm Chetan"
+    greet_m = re.search(r"\b(hello|hi|hey|good morning|good afternoon|good evening|greetings|howdy)\b", ql)
+    intro_m = re.search(r"\b(?:i am|i'm|my name is|this is)\s+([a-zA-Z]{2,20})\b", ql)
+    if intro_m:
+        slots["detected_name"] = intro_m.group(1).title()
+    if greet_m and not re.search(r"\b(spend|spent|pay|paid|balance|account|statement|transaction|how much)\b", ql):
         slots["intent"] = "greet"
         return slots
+
     if re.search(r"\b(thank you|thanks|cheers|appreciated)\b", ql) and len(ql.split()) <= 6:
         slots["intent"] = "thanks"
         return slots
@@ -354,6 +367,14 @@ def _parse_query_slots(query: str, default_year: int) -> dict[str, Any]:
         slots["intent"] = "average"
     elif re.search(r"\b(how many transactions|total transactions|number of transactions)\b", ql):
         slots["intent"] = "count"
+    elif re.search(r"\b(subscription|subscriptions|recurring|monthly bills|autopay|repeat payments)\b", ql):
+        slots["intent"] = "subscriptions"
+    elif re.search(r"\b(merchant|merchants|top vendors|vendor breakdown|payee breakdown|who did i pay)\b", ql):
+        slots["intent"] = "merchants"
+    elif re.search(r"\b(spending speed|velocity|spending trend|monthly trend|am i spending more|trend analysis)\b", ql):
+        slots["intent"] = "velocity"
+    elif re.search(r"\b(advice|saving tips|how to save|recommendation|reduce expense|reduce spending|budget advice)\b", ql):
+        slots["intent"] = "advice"
     elif slots["intent"] == "open" and slots["category"]:
         slots["intent"] = "category"
     elif slots["intent"] == "open" and (slots["date_from"] or slots["month"]):
@@ -449,61 +470,60 @@ def _list_lines(txns: list[dict], limit: int = 10) -> list[str]:
 
 
 def _compose_ledger_answer(query: str, txns: list[dict], metrics: dict, user, state: dict) -> str:
-    name = _call_name(user)
+    user_name = _user_name(user, state.get("detected_name"))
+    name_clause = f", {user_name}" if user_name else ""
     intent = state.get("intent") or "open"
     scoped = _filter_txns(txns, state)
     debit, credit, net = _totals(scoped)
     label = _scope_label(state)
 
     if intent == "bye":
-        return f"Conversation paused{name}. Ask SET anytime you want to pick this ledger back up."
+        return f"Conversation paused{name_clause}. Ask SET anytime you want to pick this back up!"
 
     if intent == "greet":
+        intro = f"Hey {user_name}! Great to meet you. " if user_name else "Hello! "
         return (
-            f"Hey{name}, this is **SET** — Smart Expense Tracker.\n\n"
-            f"I can talk through **your uploaded statements** in this project: "
-            f"**{metrics.get('count', len(txns))}** transactions, "
-            f"inflows **{_format_inr(metrics.get('credit', 0))}**, "
-            f"outflows **{_format_inr(metrics.get('debit', 0))}**.\n\n"
-            "Ask me something like *how much went to vendors in January*, *HDFC closing balance*, "
-            "or *what happened between 1 Jan and 15 Jan*. What should we look at first?"
+            f"{intro}I'm **SET**, your Smart Expense Tracker assistant.\n\n"
+            f"I have your financial ledger loaded: **{metrics.get('count', len(txns))}** transactions "
+            f"(inflows **{_format_inr(metrics.get('credit', 0))}**, outflows **{_format_inr(metrics.get('debit', 0))}**).\n\n"
+            "How can I help you today? You can ask me about recent expenses, top merchants, recurring subscriptions, or monthly balance summaries!"
         )
 
     if intent == "identity":
+        intro = f"I'm **SET**, your personal financial assistant{name_clause}.\n\n"
         return (
-            f"I'm **SET**, the assistant inside this Smart Expense Tracker project{name}.\n\n"
-            "I only work from **your** extracted bank statements, accounts, categories, and dashboard numbers — "
-            "not general web trivia. We can go back and forth: you ask, I answer from the ledger, then you follow up "
-            "(*same for SBI*, *list those*, *what about February*). What do you want to review?"
+            f"{intro}"
+            "I analyze your bank statements, track spending trends, identify recurring bills, and help you manage your accounts. "
+            "Feel free to ask me anything about your transactions, vendors, or cashflow!"
         )
 
     if intent == "thanks":
-        return f"Glad that helped{name}. Want to drill into another bank, month, or vendor next?"
+        return f"You're very welcome{name_clause}! Let me know if you need help with anything else in your ledger."
 
     if intent == "status":
         health = "surplus" if metrics.get("net", 0) >= 0 else "deficit"
         return (
-            f"SET is online{name}. Your ledger is a net **{health} of {_format_inr(metrics.get('net', 0))}** "
-            f"across **{metrics.get('count', len(txns))}** transactions. Shall we open a bank, a month, or a category?"
+            f"SET is online and ready{name_clause}. Your ledger shows a net **{health} of {_format_inr(metrics.get('net', 0))}** "
+            f"across **{metrics.get('count', len(txns))}** transactions. What shall we review first?"
         )
 
     if intent == "accounts" and user:
         accs = BankAccount.objects.filter(user=user)
         if accs.exists():
-            lines = [f"Here are the **{accs.count()}** accounts in this project{name}:\n"]
+            lines = [f"Here are the **{accs.count()}** bank accounts connected to your profile{name_clause}:\n"]
             for a in accs:
                 lines.append(f"• **{a.bank_name}** | Holder: *{a.account_holder}* | `{a.display_account}`")
-            lines.append("\nSay a bank name and I will keep the rest of this conversation on that account.")
+            lines.append("\nSay a bank name anytime and I will filter our conversation to that account.")
             return "\n".join(lines)
 
     if intent == "statements" and user:
         stmts = StatementFile.objects.filter(batch__user=user)
         if stmts.exists():
-            lines = [f"SET has processed **{stmts.count()}** statement files{name}:\n"]
+            lines = [f"SET has processed **{stmts.count()}** statement files{name_clause}:\n"]
             for s in stmts:
                 acc_info = f" ({s.account.bank_name} · {s.account.display_account})" if s.account else ""
                 lines.append(f"• **{s.original_name}**{acc_info} — {s.created_at.strftime('%d %b %Y')}")
-            lines.append("\nWant transactions from one of these files?")
+            lines.append("\nWould you like to inspect transactions from any specific file?")
             return "\n".join(lines)
 
     if intent == "balance":
@@ -511,23 +531,23 @@ def _compose_ledger_answer(query: str, txns: list[dict], metrics: dict, user, st
         if with_bal:
             latest = with_bal[0]
             return (
-                f"Latest **closing balance**{name} ({label}):\n\n"
+                f"Your latest **closing balance**{name_clause} ({label}):\n\n"
                 f"• **{_format_inr(latest['balance'])}** as of **{latest['date'] or 'N/A'}**\n"
                 f"• Bank: {latest.get('bank') or '—'}\n"
                 f"• Last narration: {latest['description']}\n\n"
-                "Should I read the last few entries that led to this balance?"
+                "Would you like me to show the recent transactions leading up to this balance?"
             )
-        return f"Net position for {label}{name}: **{_format_inr(net)}** (credits {_format_inr(credit)} − debits {_format_inr(debit)})."
+        return f"Your net position for {label}{name_clause} is **{_format_inr(net)}** (credits {_format_inr(credit)} − debits {_format_inr(debit)})."
 
     if intent == "max":
         debits = [t for t in scoped if t["debit"] > 0]
         if debits:
             max_t = max(debits, key=lambda x: x["debit"])
             return (
-                f"Largest outflow{name} ({label}):\n\n"
+                f"Your largest outflow{name_clause} ({label}) was:\n\n"
                 f"• **{_format_inr(max_t['debit'])}** — {max_t['description']}\n"
-                f"• {max_t['category']} · {max_t['date'] or 'N/A'}\n\n"
-                "Want the next few large payments as well?"
+                f"• Category: {max_t['category']} · Date: {max_t['date'] or 'N/A'}\n\n"
+                "Would you like to see other large payments as well?"
             )
 
     if intent == "min":
@@ -535,9 +555,9 @@ def _compose_ledger_answer(query: str, txns: list[dict], metrics: dict, user, st
         if debits:
             min_t = min(debits, key=lambda x: x["debit"])
             return (
-                f"Smallest outflow{name} ({label}):\n\n"
+                f"Your smallest outflow{name_clause} ({label}) was:\n\n"
                 f"• **{_format_inr(min_t['debit'])}** — {min_t['description']}\n"
-                f"• {min_t['category']} · {min_t['date'] or 'N/A'}"
+                f"• Category: {min_t['category']} · Date: {min_t['date'] or 'N/A'}"
             )
 
     if intent == "average":
@@ -545,15 +565,96 @@ def _compose_ledger_answer(query: str, txns: list[dict], metrics: dict, user, st
         if debits:
             avg = sum(debits) / len(debits)
             return (
-                f"Average debit{name} for {label} is **{_format_inr(avg)}** "
-                f"across {len(debits)} expenses. Compare another category or month?"
+                f"Your average expense{name_clause} for {label} is **{_format_inr(avg)}** "
+                f"across {len(debits)} debits. Would you like to compare another category or month?"
             )
 
     if intent == "count":
+        txn_p = "transaction" if len(scoped) == 1 else "transactions"
         return (
-            f"{label.title() if label != 'all indexed records' else 'This project'} has "
-            f"**{len(scoped)}** transactions{name}. Inflows **{_format_inr(credit)}**, "
-            f"outflows **{_format_inr(debit)}**. Want them listed, or grouped by category?"
+            f"You have **{len(scoped)}** {txn_p} {label}{name_clause}. "
+            f"Inflows: **{_format_inr(credit)}**, Outflows: **{_format_inr(debit)}**. "
+            "Would you like me to list them out or group them by category?"
+        )
+
+    if intent == "subscriptions":
+        subs = [
+            t for t in scoped
+            if t["category"] in {"Subscription", "Bills"}
+            or any(w in t["description"].lower() for w in ["netflix", "spotify", "prime", "aws", "swiggy one", "zomato gold", "hotstar", "google", "apple", "adobe", "wifi", "broadband", "electricity", "rent"])
+        ]
+        if subs:
+            total_sub = sum(t["debit"] for t in subs)
+            unique_desc: dict[str, float] = {}
+            for t in subs:
+                key = t["description"].strip()
+                unique_desc[key] = unique_desc.get(key, 0.0) + float(t["debit"])
+            sub_lines = [f"• **{k}**: {_format_inr(v)}" for k, v in sorted(unique_desc.items(), key=lambda x: x[1], reverse=True)[:7]]
+            return (
+                f"Here are your **recurring bills & subscriptions**{name_clause} ({label}):\n\n"
+                f"• Total Subscriptions & Bills: **{_format_inr(total_sub)}** across {len(subs)} payments\n\n"
+                "**Breakdown:**\n" + "\n".join(sub_lines) + "\n\n"
+                "Would you like details on any specific bill?"
+            )
+        return f"I didn't find any recurring subscriptions or bill payments for {label}{name_clause}."
+
+    if intent == "merchants":
+        debits = [t for t in scoped if t["debit"] > 0]
+        if debits:
+            merchants: dict[str, dict] = {}
+            for t in debits:
+                desc = t["description"].strip()
+                key = desc.split()[0].title() if len(desc.split()) > 0 else desc
+                if key not in merchants:
+                    merchants[key] = {"total": 0.0, "count": 0, "sample": desc}
+                merchants[key]["total"] += float(t["debit"])
+                merchants[key]["count"] += 1
+            sorted_merchants = sorted(merchants.items(), key=lambda x: x[1]["total"], reverse=True)[:5]
+            lines = [f"• **{m}** (*{info['sample'][:30]}*): {_format_inr(info['total'])} ({info['count']} txns)" for m, info in sorted_merchants]
+            return (
+                f"Here are your top **merchants & payees**{name_clause} ({label}):\n\n"
+                + "\n".join(lines) + "\n\n"
+                "Would you like to list transactions for any of these merchants?"
+            )
+
+    if intent == "velocity":
+        by_month: dict[str, float] = {}
+        for t in scoped:
+            if t["debit"] > 0 and t.get("date"):
+                m_key = t["date"][:7]
+                by_month[m_key] = by_month.get(m_key, 0.0) + float(t["debit"])
+        sorted_months = sorted(by_month.items())
+        if len(sorted_months) >= 2:
+            m1, v1 = sorted_months[-2]
+            m2, v2 = sorted_months[-1]
+            diff = v2 - v1
+            pct = ((v2 - v1) / v1 * 100) if v1 > 0 else 0
+            direction = "increased" if diff > 0 else "decreased"
+            return (
+                f"Here is your **spending velocity trend**{name_clause}:\n\n"
+                f"• **{m1}**: {_format_inr(v1)}\n"
+                f"• **{m2}**: {_format_inr(v2)}\n\n"
+                f"Your outflows {direction} by **{_format_inr(abs(diff))} ({abs(pct):.1f}%)** between {m1} and {m2}.\n"
+                "Would you like a breakdown of what drove this change?"
+            )
+        return f"There is insufficient multi-month data to compute spending velocity for {label}{name_clause}."
+
+    if intent == "advice":
+        by_cat: dict[str, float] = {}
+        for t in scoped:
+            if t["debit"] > 0:
+                by_cat[t["category"]] = by_cat.get(t["category"], 0.0) + float(t["debit"])
+        top_cats = sorted(by_cat.items(), key=lambda x: x[1], reverse=True)[:2]
+        health_tip = "You have a positive net surplus! Consider moving excess funds to investments or high-yield savings." if net >= 0 else "Your outflows exceed inflows. Consider capping optional spending."
+        cat_tips = ""
+        if top_cats:
+            cat_tips = f"\n• Your highest spending goes to **{top_cats[0][0]}** ({_format_inr(top_cats[0][1])}). Setting a 15% budget cap here could save you **{_format_inr(top_cats[0][1] * 0.15)}** monthly."
+        return (
+            f"**Financial Advisory & Smart Tips**{name_clause} ({label}):\n\n"
+            f"• {health_tip}"
+            f"{cat_tips}\n"
+            f"• Track unallocated ATM cash withdrawals to maintain 100% auditable accounting.\n\n"
+            "Ask me to analyze any specific spending category to explore further optimization!"
         )
 
     if intent == "summary":
@@ -564,32 +665,33 @@ def _compose_ledger_answer(query: str, txns: list[dict], metrics: dict, user, st
         cat_lines = [f"• **{c}**: {_format_inr(a)}" for c, a in sorted(by_cat.items(), key=lambda x: x[1], reverse=True)[:6]]
         health = "surplus" if net >= 0 else "deficit"
         return (
-            f"Cashflow for **{label}**{name}:\n\n"
+            f"Here is your cashflow overview for **{label}**{name_clause}:\n\n"
             f"• Inflows: {_format_inr(credit)}\n"
             f"• Outflows: {_format_inr(debit)}\n"
-            f"• Net: {_format_inr(net)} ({health})\n"
-            f"• Entries: {len(scoped)}\n\n"
+            f"• Net Position: {_format_inr(net)} ({health})\n"
+            f"• Total Transactions: {len(scoped)}\n\n"
             + ("**Top spend categories:**\n" + "\n".join(cat_lines) + "\n\n" if cat_lines else "")
-            + "Say a category or vendor and we will keep talking from here."
+            + "Which category or bank would you like to look into next?"
         )
 
     if not scoped and (state.get("bank") or state.get("category") or state.get("party") or state.get("date_from") or state.get("month")):
         return (
-            f"I do not see matching rows for **{label}** in this project's ledger{name}. "
-            "Try another date, bank, or merchant — or say *show all accounts*."
+            f"I didn't find any matching transactions for **{label}** in your ledger{name_clause}. "
+            "Try specifying another date, bank, or merchant — or ask me to show all transactions!"
         )
 
+    label_str = f"for **{label}**" if label != "all indexed records" else "in your ledger"
+    txn_plural = "transaction" if len(scoped) == 1 else "transactions"
     lines = [
-        f"For **{label}**{name}: **{len(scoped)}** transactions, "
-        f"outflows **{_format_inr(debit)}**, inflows **{_format_inr(credit)}**, net **{_format_inr(net)}**.\n"
+        f"Here is what I found {label_str}{name_clause}: **{len(scoped)}** {txn_plural} totaling **{_format_inr(debit)}** in outflows and **{_format_inr(credit)}** in inflows.\n"
     ]
     if state.get("want_list") or intent in {"period", "transfer", "inflow", "search", "channel", "followup", "category"}:
-        lines.append("**Entries:**")
+        lines.append("**Matching entries:**")
         lines.extend(_list_lines(scoped, 12 if state.get("want_list") else 8))
     else:
         lines.append("**Recent entries:**")
         lines.extend(_list_lines(scoped, 5))
-    lines.append(f"\nYou can follow up with *list those*, *same for another bank*, or a tighter date{name}.")
+    lines.append(f"\nWhat would you like to review next{name_clause}?")
     return "\n".join(lines)
 
 
