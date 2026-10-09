@@ -15,14 +15,14 @@ class PipelineError(Exception):
         self.message = message
 
 
-def process_batch(batch: UploadBatch) -> UploadBatch:
+def process_batch(batch: UploadBatch, password: str | None = None) -> UploadBatch:
     try:
         with db_transaction.atomic():
             total = 0
             duplicates_skipped = 0
             for statement in batch.files.all():
                 path = Path(statement.file.path)
-                parsed = parse_statement(path)
+                parsed = parse_statement(path, password=password)
                 identity = identify_statement(parsed.header_text, statement.original_name)
                 account, _ = BankAccount.objects.get_or_create(
                     user=batch.user,

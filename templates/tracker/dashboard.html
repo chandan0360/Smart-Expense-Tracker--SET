@@ -24,13 +24,25 @@
   </nav>
 </header>
 <main class="page">
-  {% if mode == "overall" %}
-    <h1>Overall analysis</h1>
-    <p class="muted">Combined view across every bank, holder and account you uploaded.</p>
-  {% else %}
-    <h1>{{ active_account.bank_name }}</h1>
-    <p class="muted">{{ active_account.account_holder }} · {{ active_account.display_account }}</p>
-  {% endif %}
+  <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:1rem; margin-bottom:1.2rem;">
+    <div>
+      {% if mode == "overall" %}
+        <h1 style="margin:0;">Overall analysis</h1>
+        <p class="muted" style="margin:0.25rem 0 0 0;">Combined view across every bank, holder and account you uploaded.</p>
+      {% else %}
+        <h1 style="margin:0;">{{ active_account.bank_name }}</h1>
+        <p class="muted" style="margin:0.25rem 0 0 0;">{{ active_account.account_holder }} · {{ active_account.display_account }}</p>
+      {% endif %}
+    </div>
+    <div>
+      <a href="{% url 'export_tax_audit_pdf' %}{% if active_account %}?account={{ active_account.id }}{% endif %}"
+         class="btn btn-primary"
+         style="display:inline-flex; align-items:center; gap:0.45rem; background:linear-gradient(135deg, #1E3A8A, #3B82F6); border:none; box-shadow:0 4px 12px rgba(30,58,138,0.25); font-weight:600; padding:0.6rem 1.1rem; border-radius:10px; color:#fff; text-decoration:none;"
+         title="Download official Summary PDF">
+        <span>📄</span> Download the summary
+      </a>
+    </div>
+  </div>
 
   {% include "tracker/_filters.html" with show_account_filter=False mode=mode reset_url="/dashboard/" %}
 
@@ -143,11 +155,11 @@
     <div class="chat-stream" id="chat-stream"></div>
 
     <div class="chat-pills" id="chat-pills">
-      <button type="button" class="chat-pill" data-q="Hi SET, what is in my ledger?">Hello SET</button>
-      <button type="button" class="chat-pill" data-q="Give me a cashflow summary">Cashflow</button>
-      <button type="button" class="chat-pill" data-q="What is my closing balance?">Balance</button>
-      <button type="button" class="chat-pill" data-q="Which bank accounts are in this project?">Accounts</button>
-      <button type="button" class="chat-pill" data-q="Show vendor payments">Vendors</button>
+      <button type="button" class="chat-pill" data-q="Hey SET! How am I doing financially?">👋 How am I doing?</button>
+      <button type="button" class="chat-pill" data-q="Where did all my money go this month?">💸 Where'd my money go?</button>
+      <button type="button" class="chat-pill" data-q="What is my latest bank balance?">🏦 Check my balance</button>
+      <button type="button" class="chat-pill" data-q="How much did I spend on food and dining?">🍕 Food & Swiggy</button>
+      <button type="button" class="chat-pill" data-q="Give me a quick cashflow check">🟢 Cashflow vibe check</button>
     </div>
 
     <div class="voice-player-bar" id="voice-player-bar" style="display:none;">
@@ -334,7 +346,7 @@
   let dialogueState = null;
   const conversationHistory = [];
   const SET_USER_NAME = "{{ request.user.first_name|default:request.user.username|escapejs }}";
-  const PLACEHOLDER_IDLE = "Talk to SET — type or use the mic. Follow-ups like “same for HDFC” work.";
+  const PLACEHOLDER_IDLE = "Ask anything about your money, or tap the mic to chat…";
 
   function setChatStatus(text) {
     const line = document.getElementById("chat-status-line");
@@ -722,9 +734,9 @@
 
   (function greetSet() {
     const intro =
-      "Hi " + SET_USER_NAME + ". I am SET, your Smart Expense Tracker assistant. " +
-      "I can talk through the statements in this project — dates, banks, vendors, GST, balances, and cashflow. " +
-      "Type a question, or tap the mic and we will go back and forth out loud.";
+      "Hey " + SET_USER_NAME + "! 👋 I'm SET, your personal finance buddy. " +
+      "Ask me anything about your money—how much you spent on food, your latest balance, or where cash went this month. " +
+      "Type away or tap the mic to chat!";
     conversationHistory.push({ role: "assistant", text: intro });
     appendMessage("bot", formatMarkdown(intro), intro, false, intro);
   })();

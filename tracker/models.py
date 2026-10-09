@@ -103,6 +103,16 @@ class Transaction(models.Model):
             )
         super().save(*args, **kwargs)
 
+    @property
+    def entity_name(self) -> str:
+        """Name of the company, vendor, merchant, or customer."""
+        from ai_engine.entity_extractor import extract_entity_name
+        return extract_entity_name(self.description, self.category)
+
+    @property
+    def counterparty(self) -> str:
+        return self.entity_name
+
 
 class CategoryRule(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="category_rules", null=True, blank=True)

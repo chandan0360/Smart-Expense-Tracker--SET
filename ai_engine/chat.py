@@ -112,14 +112,70 @@ def _call_name(user) -> str:
 
 
 def _speak_text(reply: str) -> str:
-    text = re.sub(r"[*_`#]", "", reply or "")
-    text = re.sub(r"\[(.*?)\]\(.*?\)", r"\1", text)
-    text = text.replace("₹", "rupees ")
-    text = re.sub(r"[•⚠️✅🤝💼🏛️📈👥💳🏷️📊🔍📋📅🗓️💰🏦📄]", " ", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    if len(text) > 900:
-        text = text[:880].rsplit(" ", 1)[0] + "."
-    return text
+    if not reply:
+        return ""
+    text = re.sub(r"\[(.*?)\]\(.*?\)", r"\1", reply)
+    text = re.sub(r"https?://\S+", "", text)
+    text = re.sub(r"[*_`#~]", "", text)
+    # Strip emojis and graphical symbols for smooth speech
+    text = re.sub(r"[\U00010000-\U0010ffff]|[\u2600-\u27bf]|[\u2300-\u23ff]", " ", text)
+    text = text.replace("₹", " Rupees ")
+    text = re.sub(r"\bRs\.?\b", " Rupees ", text, flags=re.I)
+    text = re.sub(r"\bINR\b", " Rupees ", text, flags=re.I)
+    text = re.sub(r"\bSET\b", "Set", text)
+    text = re.sub(r"\bUPI\b", "U P I", text, flags=re.I)
+    text = re.sub(r"\bDR\b", "Debit", text)
+    text = re.sub(r"\bCR\b", "Credit", text)
+    text = re.sub(r"\bATM\b", "A T M", text, flags=re.I)
+    text = re.sub(r"\bIMPS\b", "I M P S", text, flags=re.I)
+    text = re.sub(r"\bNEFT\b", "N E F T", text, flags=re.I)
+    text = re.sub(r"\bRTGS\b", "R T G S", text, flags=re.I)
+    text = re.sub(r"\bEMI\b", "E M I", text, flags=re.I)
+    text = re.sub(r"\bGST\b", "G S T", text, flags=re.I)
+    text = re.sub(r"\bTDS\b", "T D S", text, flags=re.I)
+    text = re.sub(r"\bFD\b", "Fixed Deposit", text, flags=re.I)
+    text = re.sub(r"[•⚠️✅🤝💼🏛️📈👥💳🏷️📊🔍📋📅🗓️💰🏦📄🔗]", " ", text)
+
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
+    spoken_parts = []
+    bullet_items = []
+    for line in lines:
+        if line.startswith("•") or line.startswith("-") or line.startswith("*"):
+            item = re.sub(r"^[•\-*]\s*", "", line).strip()
+            if "|" in item:
+                parts = [p.strip() for p in item.split("|") if p.strip()]
+                item = ", ".join(parts)
+            bullet_items.append(item)
+        else:
+            spoken_parts.append(line)
+
+    if bullet_items:
+        if len(bullet_items) == 1:
+            spoken_parts.append(f"That includes {bullet_items[0]}.")
+        elif len(bullet_items) == 2:
+            spoken_parts.append(f"That includes {bullet_items[0]}, and {bullet_items[1]}.")
+        else:
+            spoken_parts.append(
+                f"Top ones include {bullet_items[0]}, and {bullet_items[1]}, with {len(bullet_items) - 2} more on your screen."
+            )
+
+    combined = " ".join(spoken_parts)
+    combined = re.sub(r"\s+", " ", combined).strip()
+
+    # Keep speech concise and pleasant (approx 2-3 sentences, <420 chars)
+    if len(combined) > 420:
+        sentences = re.split(r"(?<=[.!?])\s+", combined)
+        trimmed = []
+        cur_len = 0
+        for s in sentences:
+            if cur_len + len(s) < 400:
+                trimmed.append(s)
+                cur_len += len(s)
+            else:
+                break
+        combined = " ".join(trimmed) if trimmed else combined[:390].rsplit(" ", 1)[0] + "."
+
+    return combined
 
 
 def _normalize_history(history: list[dict] | None, query: str) -> list[dict]:
@@ -284,14 +340,26 @@ def _parse_query_slots(query: str, default_year: int) -> dict[str, Any]:
     if re.search(r"\b(who are you|what are you|your name|introduce yourself|what can you do)\b", ql):
         slots["intent"] = "identity"
         return slots
-    if re.fullmatch(r"(hello|hi|hey|good morning|good afternoon|good evening|greetings|howdy)[!., ]*", ql):
+    if re.search(r"\b(tell me a joke|make me laugh|say something funny|cheer me up|tell a joke|crack a joke)\b", ql):
+        slots["intent"] = "casual_fun"
+        return slots
+    if re.search(r"\b(am i (broke|poor|rich)|how am i doing|can i afford|can i spend|how('?s| is) my (money|wallet|finance)|financial status)\b", ql):
+        slots["intent"] = "casual_broke"
+        return slots
+    if re.search(r"\b(where did (all )?my money go|where does it (all )?go|biggest leak|why am i spending so much|what ate (my )?money)\b", ql):
+        slots["intent"] = "casual_leak"
+        return slots
+    if re.search(r"\b(how are you|how'?s it going|how are you doing|how do you do|what'?s up|what is up|wassup|status report|system status)\b", ql):
+        slots["intent"] = "status"
+        return slots
+    if re.search(r"^(hey|hello|hi|yo|sup|greetings|howdy)\b", ql) and len(ql.split()) <= 4:
+        slots["intent"] = "greet"
+        return slots
+    if re.fullmatch(r"(hello|hi|hey|yo|sup|wassup|good morning|good afternoon|good evening|greetings|howdy)[!., ]*", ql):
         slots["intent"] = "greet"
         return slots
     if re.search(r"\b(thank you|thanks|cheers|appreciated)\b", ql) and len(ql.split()) <= 6:
         slots["intent"] = "thanks"
-        return slots
-    if re.search(r"\b(how are you|status report|system status)\b", ql):
-        slots["intent"] = "status"
         return slots
 
     dates = _extract_dates(q, default_year)
@@ -448,7 +516,14 @@ def _list_lines(txns: list[dict], limit: int = 10) -> list[str]:
     return lines
 
 
-def _compose_ledger_answer(query: str, txns: list[dict], metrics: dict, user, state: dict) -> str:
+def _compose_ledger_answer(
+    query: str,
+    txns: list[dict],
+    metrics: dict,
+    user,
+    state: dict,
+    rag_results: list[dict] | None = None,
+) -> str:
     name = _call_name(user)
     intent = state.get("intent") or "open"
     scoped = _filter_txns(txns, state)
@@ -456,35 +531,71 @@ def _compose_ledger_answer(query: str, txns: list[dict], metrics: dict, user, st
     label = _scope_label(state)
 
     if intent == "bye":
-        return f"Conversation paused{name}. Ask SET anytime you want to pick this ledger back up."
+        return f"Catch you later{name}! 👋 Whenever you want to chat about your money, I'm right here."
 
     if intent == "greet":
         return (
-            f"Hey{name}, this is **SET** — Smart Expense Tracker.\n\n"
-            f"I can talk through **your uploaded statements** in this project: "
-            f"**{metrics.get('count', len(txns))}** transactions, "
-            f"inflows **{_format_inr(metrics.get('credit', 0))}**, "
-            f"outflows **{_format_inr(metrics.get('debit', 0))}**.\n\n"
-            "Ask me something like *how much went to vendors in January*, *HDFC closing balance*, "
-            "or *what happened between 1 Jan and 15 Jan*. What should we look at first?"
+            f"Hey{name}! 👋 Great to chat with you.\n\n"
+            f"Right now in your tracker, you've got **{metrics.get('count', len(txns))} transactions** logged—"
+            f"with **{_format_inr(metrics.get('credit', 0))}** received and **{_format_inr(metrics.get('debit', 0))}** spent.\n\n"
+            "What's on your mind? We could check your latest bank balance, see where most money went, or check a specific vendor like Swiggy!"
         )
 
     if intent == "identity":
         return (
-            f"I'm **SET**, the assistant inside this Smart Expense Tracker project{name}.\n\n"
-            "I only work from **your** extracted bank statements, accounts, categories, and dashboard numbers — "
-            "not general web trivia. We can go back and forth: you ask, I answer from the ledger, then you follow up "
-            "(*same for SBI*, *list those*, *what about February*). What do you want to review?"
+            f"I'm **SET**, your personal finance companion{name}! 🤝\n\n"
+            "I keep tabs on all your uploaded bank statements, category spending, balances, and cashflow. "
+            "Think of me as a friendly buddy who knows your numbers inside out. You can ask me things like "
+            "*am I broke?*, *where did my money go?*, *how much went to food?*, or *what's my balance?*. What do you want to check?"
         )
 
     if intent == "thanks":
-        return f"Glad that helped{name}. Want to drill into another bank, month, or vendor next?"
+        return f"Anytime{name}! 😊 Always happy to help. Want to look at another category, bank, or month?"
+
+    if intent == "casual_fun":
+        return (
+            f"Here's one for you{name}: 😄\n\n"
+            "*Why did the bank teller get fired? Because a customer asked them to check their balance, so they pushed them over!* 🏦🥁\n\n"
+            "Speaking of balances, want to see yours for real?"
+        )
+
+    if intent == "casual_broke":
+        net_val = metrics.get("net", 0)
+        with_bal = [t for t in txns if t.get("balance") is not None]
+        bal_str = f"Your latest recorded bank balance is **{_format_inr(with_bal[0]['balance'])}**." if with_bal else ""
+        if net_val >= 0:
+            return (
+                f"You're doing great{name}! 🎉 {bal_str}\n\n"
+                f"Overall, you're sitting on a **surplus of {_format_inr(net_val)}** "
+                f"(inflows of {_format_inr(metrics.get('credit', 0))} vs {_format_inr(metrics.get('debit', 0))} spent). "
+                "Your wallet is definitely healthy! Want to see your top expenses or recent transactions?"
+            )
+        else:
+            return (
+                f"You're not broke, but spending was a little high recently{name}! 🧐 {bal_str}\n\n"
+                f"You've spent **{_format_inr(metrics.get('debit', 0))}** against **{_format_inr(metrics.get('credit', 0))}** in inflows (net {_format_inr(net_val)}). "
+                "No stress though—want me to show where the biggest chunk went so we can trim it?"
+            )
+
+    if intent == "casual_leak":
+        by_cat: dict[str, float] = {}
+        for t in txns:
+            if t["debit"] > 0:
+                by_cat[t["category"]] = by_cat.get(t["category"], 0.0) + float(t["debit"])
+        top_cats = sorted(by_cat.items(), key=lambda x: x[1], reverse=True)[:3]
+        cat_items = [f"• **{c}**: {_format_inr(a)}" for c, a in top_cats]
+        return (
+            f"Here's where the biggest slices of cash went{name}! 💸\n\n"
+            + "\n".join(cat_items) + "\n\n"
+            + "Want to see the specific big transactions inside one of these?"
+        )
 
     if intent == "status":
-        health = "surplus" if metrics.get("net", 0) >= 0 else "deficit"
+        health = "in the green 🟢" if metrics.get("net", 0) >= 0 else "running a slight deficit 🔴"
         return (
-            f"SET is online{name}. Your ledger is a net **{health} of {_format_inr(metrics.get('net', 0))}** "
-            f"across **{metrics.get('count', len(txns))}** transactions. Shall we open a bank, a month, or a category?"
+            f"Doing awesome, thanks for asking{name}! 😄 Your finances are {health} right now, "
+            f"sitting at a net of **{_format_inr(metrics.get('net', 0))}** across your {metrics.get('count', len(txns))} logged entries.\n\n"
+            "Shall we check out a specific bank, month, or category?"
         )
 
     if intent == "accounts" and user:
@@ -511,23 +622,23 @@ def _compose_ledger_answer(query: str, txns: list[dict], metrics: dict, user, st
         if with_bal:
             latest = with_bal[0]
             return (
-                f"Latest **closing balance**{name} ({label}):\n\n"
+                f"Here's your latest **closing balance**{name} ({label}): 🏦\n\n"
                 f"• **{_format_inr(latest['balance'])}** as of **{latest['date'] or 'N/A'}**\n"
                 f"• Bank: {latest.get('bank') or '—'}\n"
-                f"• Last narration: {latest['description']}\n\n"
-                "Should I read the last few entries that led to this balance?"
+                f"• Last activity: {latest['description']}\n\n"
+                "Want me to list the last couple of transactions that led to this?"
             )
-        return f"Net position for {label}{name}: **{_format_inr(net)}** (credits {_format_inr(credit)} − debits {_format_inr(debit)})."
+        return f"Your net position for {label}{name} is **{_format_inr(net)}** (credits {_format_inr(credit)} − debits {_format_inr(debit)})."
 
     if intent == "max":
         debits = [t for t in scoped if t["debit"] > 0]
         if debits:
             max_t = max(debits, key=lambda x: x["debit"])
             return (
-                f"Largest outflow{name} ({label}):\n\n"
-                f"• **{_format_inr(max_t['debit'])}** — {max_t['description']}\n"
-                f"• {max_t['category']} · {max_t['date'] or 'N/A'}\n\n"
-                "Want the next few large payments as well?"
+                f"Here's your biggest expense{name} ({label}): 💥\n\n"
+                f"• **{_format_inr(max_t['debit'])}** on **{max_t['description']}**\n"
+                f"• Category: {max_t['category']} · Date: {max_t['date'] or 'N/A'}\n\n"
+                "Want to see the rest of your top payments too?"
             )
 
     if intent == "min":
@@ -572,6 +683,28 @@ def _compose_ledger_answer(query: str, txns: list[dict], metrics: dict, user, st
             + ("**Top spend categories:**\n" + "\n".join(cat_lines) + "\n\n" if cat_lines else "")
             + "Say a category or vendor and we will keep talking from here."
         )
+
+    if rag_results:
+        high_rel = [r for r in rag_results if r.get("score", 0) >= 0.08]
+        if high_rel and (not scoped or intent in {"search", "open"}):
+            rag_lines = []
+            rag_debit = 0.0
+            rag_credit = 0.0
+            for r in high_rel[:6]:
+                d = float(r.get("debit") or 0.0)
+                c = float(r.get("credit") or 0.0)
+                rag_debit += d
+                rag_credit += c
+                amt_str = f"Debit {_format_inr(d)}" if d > 0 else f"Credit {_format_inr(c)}"
+                rag_lines.append(f"• **{r.get('date') or 'N/A'}** — {amt_str} | {r.get('description', '')} (*{r.get('category', 'General')}*)")
+            ans = [
+                f"Found **{len(high_rel)}** relevant entries via semantic search{name}:\n",
+                *rag_lines,
+            ]
+            if rag_debit > 0 or rag_credit > 0:
+                ans.append(f"\nTotal: Outflows **{_format_inr(rag_debit)}** · Inflows **{_format_inr(rag_credit)}**.")
+            ans.append("\nWould you like more details or want to filter by month?")
+            return "\n".join(ans)
 
     if not scoped and (state.get("bank") or state.get("category") or state.get("party") or state.get("date_from") or state.get("month")):
         return (
@@ -654,7 +787,7 @@ def _call_groq_api(api_key: str, system_prompt: str, user_prompt: str, history: 
 
 
 def _call_gemini_api(api_key: str, system_prompt: str, user_prompt: str, history: list[dict] | None = None) -> str:
-    models = ["gemini-2.5-flash", "gemini-1.5-flash"]
+    models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]
     last_err = None
     contents = []
     if history:
@@ -689,11 +822,25 @@ def _call_gemini_api(api_key: str, system_prompt: str, user_prompt: str, history
     raise RuntimeError(f"Gemini API error: {last_err}")
 
 
-def _local_fallback_answer(query: str, txns: list[dict], metrics: dict, user=None, state: dict | None = None) -> str:
+def _local_fallback_answer(
+    query: str,
+    txns: list[dict],
+    metrics: dict,
+    user=None,
+    state: dict | None = None,
+    rag_results: list[dict] | None = None,
+) -> str:
     math_ans = _try_eval_math(query, user_name=_user_name(user))
     if math_ans:
         return math_ans
-    return _compose_ledger_answer(query, txns, metrics, user, state or _empty_state())
+    return _compose_ledger_answer(
+        query,
+        txns,
+        metrics,
+        user,
+        state or _empty_state(),
+        rag_results=rag_results,
+    )
 
 
 def answer_transaction_query(
@@ -788,17 +935,22 @@ def answer_transaction_query(
         for t in preview_src
     ]
 
-    system_prompt = f"""You are SET (Smart Expense Tracker AI) inside this Django project. You are talking with {user_name}.
+    system_prompt = f"""You are SET (Smart Expense Tracker), {user_name}'s sharp, friendly, and casual personal finance buddy and co-pilot. You are having a live conversation with {user_name}.
 
-You hold a live conversation. Remember the last topic. If they say "list those", "what about February", or "same for HDFC", continue from the current filters.
+Personality & Conversational Style:
+- Sound like a knowledgeable, encouraging friend having a chat over coffee—warm, relatable, clear, and direct.
+- Speak naturally and casually! Feel free to use light, friendly emojis (👋, 💸, 🍕, 📊, 🚀, 😄, 🟢, 💡) to make the chat feel alive.
+- Call {user_name} by their first name naturally. Never say "boss".
+- Avoid cold robotic tables, bureaucratic jargon, or corporate lecture tone. Instead of "Per your ledger debit aggregated to...", say "Looks like you spent around ₹4,200, mostly on groceries and Swiggy."
+- If {user_name} asks casual questions like "am I broke?", "where did all my money go?", "how am I doing?", or vents about spending, respond warmly and playfully, while grounding your answer with their real bank balance and numbers!
+- Keep replies punchy, scannable, and easy to read or listen to out loud. Bold key amounts like **₹1,250**.
+- Always finish with a natural, friendly conversation nudge ("Want to see where else money went, or check your Swiggy orders?").
+- If no transactions match, be lighthearted: "I couldn't spot any transactions for that! Maybe try a different merchant or month?"
 
-Rules:
-- Use only this project's ledger. Amounts in Indian Rupees (₹).
-- Address {user_name} naturally. Never say "boss".
-- Answer the latest question first, then one short follow-up question so the dialogue can continue.
-- If they go off-topic, steer back to their statements, accounts, categories, and cashflow.
-- If no rows match, say so clearly and suggest another filter.
-- Keep replies readable: short paragraphs and bullets, not a dump.
+Grounding Rules:
+- All financial facts, amounts, dates, and account details MUST strictly come from the user's ledger data below. Never invent transactions.
+- Always express currency in Indian Rupees (₹).
+- Remember prior topics and active filters during follow-up questions.
 
 Conversation filters in play:
 {json.dumps({k: v for k, v in state.items() if v}, ensure_ascii=False)}
@@ -845,7 +997,7 @@ Recent transactions in focus:
         except Exception:
             reply = None
     if not reply:
-        reply = _local_fallback_answer(query, txns_data, metrics, user=user, state=state)
+        reply = _local_fallback_answer(query, txns_data, metrics, user=user, state=state, rag_results=rag_results)
         model_name = "set-local"
 
     return {

@@ -934,14 +934,36 @@ button, input, select {
   overflow: auto;
 }
 
-table.ledger,
+table.ledger {
+  width: 100%;
+  min-width: 1220px;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.86rem;
+}
+
 table.data-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.88rem;
 }
 
-table.ledger th,
+table.ledger th {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background-color: #F8FAFC;
+  color: #475569;
+  font-weight: 700;
+  font-size: 0.74rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border-bottom: 2px solid #E2E8F0;
+  padding: 0.8rem 0.75rem;
+  text-align: left;
+  white-space: nowrap;
+}
+
 table.data-table th {
   position: sticky;
   top: 0;
@@ -956,7 +978,20 @@ table.data-table th {
   text-align: left;
 }
 
-table.ledger td,
+table.ledger th.th-num,
+table.ledger td.td-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+table.ledger td {
+  border-bottom: 1px solid #E2E8F0;
+  padding: 0.7rem 0.75rem;
+  text-align: left;
+  vertical-align: middle;
+  color: var(--text-primary);
+}
+
 table.data-table td {
   border-bottom: 1px solid var(--border);
   padding: 0.75rem 0.85rem;
@@ -968,6 +1003,70 @@ table.data-table td {
 table.ledger tr:hover td,
 table.data-table tr:hover td {
   background-color: #F8FAFC;
+}
+
+.table-glass-wrap {
+  overflow-x: auto;
+  overflow-y: auto;
+  max-height: 72vh;
+  border-radius: 10px;
+  border: 1px solid #E2E8F0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  background: #FFFFFF;
+}
+
+.category-select-compact {
+  width: 100%;
+  max-width: 145px;
+  height: 32px;
+  background-color: #F8FAFC;
+  color: var(--text-primary);
+  border: 1px solid #CBD5E1;
+  border-radius: 6px;
+  padding: 0 0.5rem;
+  font-size: 0.81rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.category-select-compact:focus {
+  border-color: var(--primary);
+  background-color: #FFFFFF;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.15);
+}
+
+.badge-entity {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: rgba(79, 70, 229, 0.08);
+  color: #4338CA;
+  font-weight: 600;
+  padding: 0.22rem 0.55rem;
+  border-radius: 6px;
+  font-size: 0.81rem;
+  border: 1px solid rgba(79, 70, 229, 0.16);
+  white-space: nowrap;
+  max-width: 155px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-name-truncate {
+  display: inline-block;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+  font-size: 0.78rem;
+  color: #64748B;
+}
+
+.money-val {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: 600;
 }
 
 .money-dr {
@@ -1662,6 +1761,40 @@ table.data-table tr:hover td {
   letter-spacing: 0.3px;
 }
 
+/* Top Bar Right Group: Date/Time + Sign Out */
+.set-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.set-topbar-signout-form {
+  margin: 0;
+}
+
+.set-topbar-signout-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: rgba(244, 63, 94, 0.15);
+  border: 1px solid rgba(244, 63, 94, 0.35);
+  color: #FDA4AF;
+  border-radius: 9999px;
+  padding: 0.52rem 1.15rem;
+  font-weight: 700;
+  font-size: 0.92rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
+.set-topbar-signout-btn:hover {
+  background: rgba(244, 63, 94, 0.3);
+  color: #FFFFFF;
+  border-color: rgba(244, 63, 94, 0.6);
+  transform: translateY(-1px);
+}
+
 /* ---------- Main Grid Layout (Sidebar + Workspace) ---------- */
 .set-home-layout {
   display: grid;
@@ -1715,30 +1848,94 @@ table.data-table tr:hover td {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4), 0 0 0 2px rgba(56, 189, 248, 0.4);
 }
 
-/* Bottom Left Settings Gear Button */
+/* Bottom Left Settings (White) & Direct Sign Out (Red) */
+.set-sidebar-bottom {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  width: 100%;
+  margin-top: auto;
+  padding-top: 1.2rem;
+}
+
 .set-gear-btn {
-  background: transparent;
-  border: none;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  background: rgba(255, 255, 255, 0.08) !important;
+  border: 1.5px solid rgba(255, 255, 255, 0.3) !important;
+  border-radius: 9999px !important;
+  padding: 0.65rem 1.2rem !important;
+  color: #FFFFFF !important;
   cursor: pointer;
-  padding: 0.5rem;
-  width: fit-content;
+  transition: all 0.25s ease;
+  backdrop-filter: blur(8px);
+  width: 100% !important;
+  font-weight: 700 !important;
+  font-size: 1rem !important;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3) !important;
+}
+
+.set-gear-btn:hover {
+  background: rgba(255, 255, 255, 0.18) !important;
+  color: #FFFFFF !important;
+  border-color: rgba(255, 255, 255, 0.6) !important;
+  box-shadow: 0 6px 18px rgba(255, 255, 255, 0.25) !important;
+  transform: translateY(-2px);
+}
+
+.set-gear-icon-wrap {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
-  transition: transform 0.3s ease;
+  color: #FFFFFF !important;
+  flex-shrink: 0;
 }
 
-.set-gear-icon {
-  font-size: 3rem;
-  color: #0F172A;
-  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.35));
+.set-gear-svg {
+  stroke: #FFFFFF !important;
   transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
-.set-gear-btn:hover .set-gear-icon {
-  transform: rotate(90deg) scale(1.1);
-  color: #1E293B;
+.set-gear-btn:hover .set-gear-svg {
+  transform: rotate(90deg);
+}
+
+.set-sidebar-btn-label {
+  color: #FFFFFF !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.3px;
+}
+
+.set-sidebar-logout-form {
+  margin: 0;
+  width: 100%;
+}
+
+.set-sidebar-signout-btn {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 0.65rem !important;
+  background: linear-gradient(135deg, #EF4444, #DC2626) !important;
+  border: 1.5px solid #F87171 !important;
+  border-radius: 9999px !important;
+  padding: 0.65rem 1.2rem !important;
+  color: #FFFFFF !important;
+  cursor: pointer;
+  width: 100% !important;
+  font-weight: 700 !important;
+  font-size: 1rem !important;
+  transition: all 0.25s ease;
+  box-shadow: 0 4px 14px rgba(220, 38, 38, 0.45) !important;
+}
+
+.set-sidebar-signout-btn:hover {
+  background: linear-gradient(135deg, #DC2626, #B91C1C) !important;
+  color: #FFFFFF !important;
+  border-color: #FCA5A5 !important;
+  box-shadow: 0 6px 20px rgba(220, 38, 38, 0.6) !important;
+  transform: translateY(-2px);
 }
 
 /* ---------- Right Main Workspace (Blank White Space for Upload) ---------- */
@@ -2356,10 +2553,32 @@ table.data-table tr:hover td {
     font-size: 0.95rem;
   }
 
+  .set-topbar-right {
+    width: 100%;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+  }
+
   .set-home-sidebar {
     flex-direction: row;
     align-items: center;
     justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+
+  .set-sidebar-bottom {
+    flex-direction: row;
+    width: auto;
+    gap: 0.5rem;
+  }
+
+  .set-gear-btn,
+  .set-sidebar-signout-btn {
+    width: auto;
+    padding: 0.5rem 0.95rem;
+    font-size: 0.88rem;
   }
 
   .set-workspace-white-card {

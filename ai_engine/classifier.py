@@ -245,3 +245,14 @@ def classify_bank(header_text: str) -> tuple[str, float]:
         if label in classes:
             proba = float(probs[classes.index(label)])
     return label, proba
+
+
+def classify_transaction(text: str, user=None) -> tuple[str, float]:
+    """Alias for classify_category."""
+    return classify_category(text, user=user)
+
+
+def predict_category(text: str, user=None) -> str:
+    """Predict category string for given narration."""
+    category, _ = classify_category(text, user=user)
+    return category

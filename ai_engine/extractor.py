@@ -39,6 +39,25 @@ CREDIT_KEYS = ("credit", "deposit", "deposits", "cr", "credit amount", "deposit 
 AMOUNT_KEYS = ("amount", "txn amount", "transaction amount", "amount (inr)", "amount (rs)")
 TYPE_KEYS = ("type", "dr/cr", "cr/dr", "txn type", "indicator")
 BALANCE_KEYS = ("balance", "closing balance", "available balance", "running balance", "balance (inr)", "account balance", "closing bal", "net balance")
+CURRENCY_KEYS = ("currency", "curr", "ccy", "txn currency", "trans currency", "transaction currency")
+
+# Standard Forex Baseline Exchange Rates to INR (Indian Rupees)
+CURRENCY_RATES_TO_INR: dict[str, tuple[str, float]] = {
+    "USD": ("USD", 83.50),
+    "$": ("USD", 83.50),
+    "EUR": ("EUR", 91.00),
+    "€": ("EUR", 91.00),
+    "GBP": ("GBP", 106.00),
+    "£": ("GBP", 106.00),
+    "AED": ("AED", 22.75),
+    "SGD": ("SGD", 62.20),
+    "CAD": ("CAD", 61.30),
+    "AUD": ("AUD", 55.40),
+    "JPY": ("JPY", 0.55),
+    "CNY": ("CNY", 11.50),
+    "SAR": ("SAR", 22.25),
+    "QAR": ("QAR", 22.90),
+}
 
 
 class StatementParseError(ValueError):
@@ -68,10 +87,18 @@ def _norm(value: str) -> str:
 
 def _match_col(columns: list[str], keys: tuple[str, ...]) -> str | None:
     normalized = {_norm(c): c for c in columns}
+    # 1. Exact match pass
     for key in keys:
         want = _norm(key)
         for n, original in normalized.items():
-            if want == n or want in n:
+            if want == n:
+                return original
+    # 2. Word boundary or long phrase match pass
+    for key in keys:
+        want = _norm(key)
+        for n, original in normalized.items():
+            words = n.split()
+            if want in words or (len(want) >= 5 and want in n):
                 return original
     return None
 
@@ -126,6 +153,8 @@ def dataframe_to_transactions(df: pd.DataFrame) -> list[ParsedTransaction]:
     type_col = _match_col(cols, TYPE_KEYS)
     balance_col = _match_col(cols, BALANCE_KEYS)
 
+    currency_col = _match_col(cols, CURRENCY_KEYS)
+
     if not desc_col and len(cols) >= 2:
         desc_col = cols[1]
     if not date_col:
@@ -155,6 +184,36 @@ def dataframe_to_transactions(df: pd.DataFrame) -> list[ParsedTransaction]:
 
         txn_date = _parse_date(record.get(date_col)) if date_col else None
         balance = _parse_amount(record.get(balance_col)) if balance_col else None
+
+        # Multi-Currency Detection & Auto-Conversion to INR
+        forex_code = None
+        forex_rate = 1.0
+
+        if currency_col:
+            raw_curr = str(record.get(currency_col, "")).strip().upper()
+            if raw_curr in CURRENCY_RATES_TO_INR:
+                forex_code, forex_rate = CURRENCY_RATES_TO_INR[raw_curr]
+
+        if not forex_code:
+            for symbol, (c_code, rate) in CURRENCY_RATES_TO_INR.items():
+                pattern = rf"(?:\b{re.escape(symbol)}\b|{re.escape(symbol)})\s*[\d,]+(?:\.\d+)?"
+                if re.search(pattern, description, re.IGNORECASE):
+                    forex_code = c_code
+                    forex_rate = rate
+                    break
+
+        if forex_code and forex_rate != 1.0:
+            orig_debit = debit
+            orig_credit = credit
+            if debit > 0:
+                debit = round(debit * forex_rate, 2)
+                description += f" [Converted: {forex_code} {orig_debit:,.2f} @ ₹{forex_rate:.2f}]"
+            elif credit > 0:
+                credit = round(credit * forex_rate, 2)
+                description += f" [Converted: {forex_code} {orig_credit:,.2f} @ ₹{forex_rate:.2f}]"
+            if balance is not None:
+                balance = round(balance * forex_rate, 2)
+
         rows.append(
             ParsedTransaction(
                 txn_date=txn_date,
@@ -303,13 +362,22 @@ def _tables_to_df(tables: list[list[list[str | None]]]) -> pd.DataFrame | None:
     return best
 
 
-def parse_pdf(path: Path) -> ParsedStatement:
+def parse_pdf(path: Path, password: str | None = None) -> ParsedStatement:
     tables: list[list[list[str | None]]] = []
-    with pdfplumber.open(path) as pdf:
-        header_text = _pdf_header_text(pdf)
-        for page in pdf.pages:
-            for table in page.extract_tables() or []:
-                tables.append(table)
+    try:
+        with pdfplumber.open(path, password=password) as pdf:
+            header_text = _pdf_header_text(pdf)
+            for page in pdf.pages:
+                for table in page.extract_tables() or []:
+                    tables.append(table)
+    except Exception as exc:
+        err_str = str(exc).lower()
+        if "password" in err_str or "encrypted" in err_str or "authenticate" in err_str or "incorrect" in err_str:
+            raise StatementParseError(
+                "This bank statement PDF is password-protected. Please enter the password (e.g. PAN or DOB) in the upload form."
+            )
+        raise
+
     df = _tables_to_df(tables)
     if df is None or df.empty:
         raise StatementParseError(
@@ -322,10 +390,10 @@ def parse_pdf(path: Path) -> ParsedStatement:
     )
 
 
-def parse_statement(path: Path) -> ParsedStatement:
+def parse_statement(path: Path, password: str | None = None) -> ParsedStatement:
     suffix = path.suffix.lower()
     if suffix == ".pdf":
-        return parse_pdf(path)
+        return parse_pdf(path, password=password)
     if suffix in {".csv", ".tsv", ".txt", ".xlsx", ".xls"}:
         parsed = parse_tabular_file(path)
         if suffix in {".csv", ".txt"} and "bank" not in parsed.header_text.lower():

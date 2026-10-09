@@ -33,6 +33,18 @@
         <p class="muted" style="margin:0;">Classified business statement entries. AI auto-learns whenever you update a category.</p>
       </div>
       <div style="display:flex; gap:0.65rem; align-items:center; flex-wrap:wrap;">
+        <a href="{% url 'export_transactions_csv' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}"
+           class="btn"
+           style="display:inline-flex; align-items:center; gap:0.35rem; background:rgba(255,255,255,0.9); border:1px solid rgba(15,23,42,0.2); font-weight:600; text-decoration:none; color:var(--text-main);"
+           title="Export filtered transactions to CSV">
+          📥 Export CSV
+        </a>
+        <a href="{% url 'export_transactions_excel' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}"
+           class="btn"
+           style="display:inline-flex; align-items:center; gap:0.35rem; background:rgba(255,255,255,0.9); border:1px solid rgba(15,23,42,0.2); font-weight:600; text-decoration:none; color:var(--text-main);"
+           title="Export filtered transactions to Excel (.xlsx)">
+          📊 Export Excel
+        </a>
         <button type="button" class="btn btn-primary" onclick="openManualModal()" style="display:inline-flex; align-items:center; gap:0.4rem;">
           ➕ Record Cash / Manual Spend
         </button>
@@ -49,30 +61,42 @@
     {% if not transactions %}
       <p class="muted">No rows match these filters. Reset filters or upload another statement.</p>
     {% else %}
-    <div class="table-glass-wrap" style="overflow:auto; max-height:70vh;">
+    <div class="table-glass-wrap">
       <table class="ledger">
+        <colgroup>
+          <col style="width: 95px;"> <!-- Date -->
+          <col style="width: 155px;"> <!-- Bank / Account -->
+          <col style="min-width: 240px;"> <!-- Description -->
+          <col style="width: 160px;"> <!-- Company / Vendor -->
+          <col style="width: 150px;"> <!-- AI Category -->
+          <col style="width: 115px;"> <!-- Debit -->
+          <col style="width: 115px;"> <!-- Credit -->
+          <col style="width: 125px;"> <!-- Balance -->
+          <col style="width: 130px;"> <!-- Source / Actions -->
+        </colgroup>
         <thead>
           <tr>
-            <th>Date</th>
+            <th style="white-space: nowrap;">Date</th>
             <th>Bank / Account</th>
-            <th>Description</th>
-            <th>Debit</th>
-            <th>Credit</th>
-            <th>Balance</th>
+            <th>Description / Narration</th>
+            <th>Company / Vendor</th>
             <th>AI Category</th>
-            <th>Source / Actions</th>
+            <th class="th-num">Debit (₹)</th>
+            <th class="th-num">Credit (₹)</th>
+            <th class="th-num">Balance (₹)</th>
+            <th style="text-align: center;">Source / Actions</th>
           </tr>
         </thead>
         <tbody>
           {% for t in transactions %}
             <tr class="{% if t.is_manual %}manual-txn-row{% endif %}">
-              <td class="muted">{{ t.txn_date|default:"—" }}</td>
+              <td class="muted" style="white-space: nowrap; font-weight: 500;">{{ t.txn_date|default:"—" }}</td>
               <td>
-                {{ t.account.bank_name|default:"Cash Wallet" }}<br>
-                <span class="muted">{{ t.account.account_holder|default:request.user.username }} · {{ t.account.display_account|default:"Petty Cash" }}</span>
+                <strong style="font-size:0.85rem; color:#1E293B;">{{ t.account.bank_name|default:"Cash Wallet" }}</strong><br>
+                <span class="muted" style="font-size:0.75rem;">{{ t.account.display_account|default:"Petty Cash" }} · {{ t.account.account_holder|default:request.user.username|truncatechars:18 }}</span>
               </td>
               <td>
-                <strong>{{ t.description }}</strong>
+                <span style="font-weight: 600; color:#0F172A;">{{ t.description }}</span>
                 {% if t.notes %}
                   <br><small class="muted">📝 {{ t.notes }}</small>
                 {% endif %}
@@ -80,29 +104,42 @@
                   <br><small style="color:#B45309;">↳ Cash spent from: {{ t.parent_transaction.description|truncatechars:30 }} (₹{{ t.parent_transaction.debit|floatformat:2 }})</small>
                 {% endif %}
               </td>
-              <td class="money-dr">{% if t.debit %}{{ t.debit|floatformat:2|intcomma }}{% endif %}</td>
-              <td class="money-cr">{% if t.credit %}{{ t.credit|floatformat:2|intcomma }}{% endif %}</td>
-              <td>{% if t.balance != None %}{{ t.balance|floatformat:2|intcomma }}{% else %}—{% endif %}</td>
               <td>
-                <form method="post" action="{% url 'update_category' t.id %}">
+                <span class="badge-entity" title="{{ t.entity_name }}">
+                  🏢 {{ t.entity_name }}
+                </span>
+              </td>
+              <td>
+                <form method="post" action="{% url 'update_category' t.id %}" style="margin:0;">
                   {% csrf_token %}
                   <input type="hidden" name="next" value="{{ request.get_full_path }}">
-                  <select class="category-select" name="category" onchange="this.form.submit()">
+                  <select class="category-select-compact" name="category" onchange="this.form.submit()">
                     {% for cat in categories %}
                       <option value="{{ cat }}" {% if t.category == cat %}selected{% endif %}>{{ cat }}</option>
                     {% endfor %}
                   </select>
                 </form>
               </td>
-              <td>
+              <td class="td-num money-dr money-val">
+                {% if t.debit %}{{ t.debit|floatformat:2|intcomma }}{% else %}<span class="muted" style="font-weight:400;">—</span>{% endif %}
+              </td>
+              <td class="td-num money-cr money-val">
+                {% if t.credit %}{{ t.credit|floatformat:2|intcomma }}{% else %}<span class="muted" style="font-weight:400;">—</span>{% endif %}
+              </td>
+              <td class="td-num money-val" style="color:#334155;">
+                {% if t.balance != None %}{{ t.balance|floatformat:2|intcomma }}{% else %}<span class="muted" style="font-weight:400;">—</span>{% endif %}
+              </td>
+              <td style="text-align: center;">
                 {% if t.is_manual %}
-                  <span class="badge-manual" title="Manually recorded expense">✍️ Manual Entry</span>
+                  <span class="badge-manual" title="Manually recorded expense">✍️ Manual</span>
                 {% else %}
-                  <span class="muted" style="font-size:0.8rem;">{{ t.statement.original_name|default:"Statement File" }}</span>
+                  <span class="file-name-truncate" title="{{ t.statement.original_name|default:'Statement File' }}">
+                    📄 {{ t.statement.original_name|default:"Statement" }}
+                  </span>
                   {% if t.category == "ATM/Cash" or "atm" in t.description.lower or "cash wdl" in t.description.lower %}
                     <br>
-                    <button type="button" class="btn-xs btn-outline" style="margin-top:0.3rem;" onclick="openManualModal('{{ t.id }}', 'Cash spend from: {{ t.description|escapejs }}', '{{ t.debit }}', '{{ t.account.id }}')">
-                      ➕ Record Spend
+                    <button type="button" class="btn-xs btn-outline" style="margin-top:0.25rem;" onclick="openManualModal('{{ t.id }}', 'Cash spend from: {{ t.description|escapejs }}', '{{ t.debit }}', '{{ t.account.id }}')">
+                      ➕ Split Cash
                     </button>
                   {% endif %}
                 {% endif %}

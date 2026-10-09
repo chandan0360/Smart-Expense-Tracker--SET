@@ -5,6 +5,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.db import transaction as db_transaction
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_POST
@@ -84,8 +85,9 @@ def upload_view(request):
                 file=uploaded,
                 original_name=uploaded.name,
             )
+        pdf_password = (request.POST.get("pdf_password") or "").strip() or None
         try:
-            process_batch(batch)
+            process_batch(batch, password=pdf_password)
             from ai_engine.rag import get_user_vector_store
             get_user_vector_store(request.user, force_refresh=True)
         except PipelineError as exc:
@@ -344,14 +346,21 @@ def chat_api_view(request):
     return JsonResponse(result)
 
 
+_TTS_AUDIO_CACHE: dict[str, bytes] = {}
+_MAX_TTS_CACHE_ENTRIES = 150
+
+
 @login_required
 def tts_api_view(request):
+    import asyncio
+    import hashlib
     import json
     import os
     import re
     import urllib.request
     from django.conf import settings
     from django.http import HttpResponse, JsonResponse
+    import edge_tts
 
     if request.method != "POST":
         return JsonResponse({"status": "error", "error": "Only POST requests allowed."}, status=405)
@@ -365,17 +374,37 @@ def tts_api_view(request):
     if not text:
         return JsonResponse({"status": "error", "error": "No text provided."}, status=400)
 
-    # Clean text for neural speech synthesis (spoken conversation, not markdown)
+    # Clean text for neural speech synthesis (spoken conversation, not raw markdown)
     clean_text = re.sub(r"<[^>]*>", "", text)
     clean_text = re.sub(r"\[(.*?)\]\(.*?\)", r"\1", clean_text)
-    clean_text = re.sub(r"[*_#`]", "", clean_text)
-    clean_text = re.sub(r"[•⚠️✅🤝💼🏛️📈👥💳🏷️📊🔍📋📅🗓️💰🏦📄]", " ", clean_text)
-    clean_text = clean_text.replace("₹", "rupees ").replace("SET", "Set")
+    clean_text = re.sub(r"https?://\S+", "", clean_text)
+    clean_text = re.sub(r"[*_#`~]", "", clean_text)
+    clean_text = re.sub(r"[•⚠️✅🤝💼🏛️📈👥💳🏷️📊🔍📋📅🗓️💰🏦📄🔗]", " ", clean_text)
+    clean_text = clean_text.replace("₹", " Rupees ")
+    clean_text = re.sub(r"\bRs\.?\b", " Rupees ", clean_text, flags=re.I)
+    clean_text = re.sub(r"\bINR\b", " Rupees ", clean_text, flags=re.I)
+    clean_text = re.sub(r"\bSET\b", "Set", clean_text)
+    clean_text = re.sub(r"\bUPI\b", "U P I", clean_text, flags=re.I)
+    clean_text = re.sub(r"\bDR\b", "Debit", clean_text)
+    clean_text = re.sub(r"\bCR\b", "Credit", clean_text)
+    clean_text = re.sub(r"\bATM\b", "A T M", clean_text, flags=re.I)
+    clean_text = re.sub(r"\bIMPS\b", "I M P S", clean_text, flags=re.I)
+    clean_text = re.sub(r"\bNEFT\b", "N E F T", clean_text, flags=re.I)
+    clean_text = re.sub(r"\bRTGS\b", "R T G S", clean_text, flags=re.I)
+    clean_text = re.sub(r"\bEMI\b", "E M I", clean_text, flags=re.I)
+    clean_text = re.sub(r"\bGST\b", "G S T", clean_text, flags=re.I)
+    clean_text = re.sub(r"\bTDS\b", "T D S", clean_text, flags=re.I)
+    clean_text = re.sub(r"\bFD\b", "Fixed Deposit", clean_text, flags=re.I)
     clean_text = re.sub(r"\s+", " ", clean_text).strip()
     if len(clean_text) > 1200:
         clean_text = clean_text[:1180].rsplit(" ", 1)[0] + "."
     if not clean_text:
         return JsonResponse({"status": "error", "error": "Empty sanitized text."}, status=400)
+
+    voice_name = body.get("voice") or "en-IN-NeerjaNeural"
+    cache_key = hashlib.md5(f"{voice_name}:{clean_text}".encode("utf-8")).hexdigest()
+    if cache_key in _TTS_AUDIO_CACHE:
+        return HttpResponse(_TTS_AUDIO_CACHE[cache_key], content_type="audio/mpeg")
 
     deepgram_key = (
         (body.get("deepgram_api_key") or "").strip()
@@ -400,20 +429,18 @@ def tts_api_view(request):
             )
             with urllib.request.urlopen(req, timeout=12) as resp:
                 audio_bytes = resp.read()
+                if len(_TTS_AUDIO_CACHE) >= _MAX_TTS_CACHE_ENTRIES:
+                    _TTS_AUDIO_CACHE.pop(next(iter(_TTS_AUDIO_CACHE)), None)
+                _TTS_AUDIO_CACHE[cache_key] = audio_bytes
                 return HttpResponse(audio_bytes, content_type="audio/mp3")
         except Exception:
             pass
 
-    # 2. SET Neural edge_tts Engine
+    # 2. SET Neural edge_tts Engine (Free high quality neural synthesis)
     try:
-        import asyncio
-        import edge_tts
-
-        voice_name = body.get("voice") or "en-IN-NeerjaNeural"
-
         async def _synthesize():
             try:
-                communicate = edge_tts.Communicate(clean_text, voice=voice_name, pitch="+0Hz", rate="+2%")
+                communicate = edge_tts.Communicate(clean_text, voice=voice_name, pitch="+2Hz", rate="+5%")
                 audio_stream = bytearray()
                 async for chunk in communicate.stream():
                     if chunk["type"] == "audio":
@@ -421,7 +448,7 @@ def tts_api_view(request):
                 return bytes(audio_stream)
             except Exception:
                 # Fallback to Emily Neural if Neerja has temporary connectivity hiccup
-                communicate = edge_tts.Communicate(clean_text, voice="en-IE-EmilyNeural", pitch="+0Hz", rate="+1%")
+                communicate = edge_tts.Communicate(clean_text, voice="en-IE-EmilyNeural", pitch="+1Hz", rate="+4%")
                 audio_stream = bytearray()
                 async for chunk in communicate.stream():
                     if chunk["type"] == "audio":
@@ -429,6 +456,104 @@ def tts_api_view(request):
                 return bytes(audio_stream)
 
         audio_bytes = asyncio.run(_synthesize())
+        if len(_TTS_AUDIO_CACHE) >= _MAX_TTS_CACHE_ENTRIES:
+            _TTS_AUDIO_CACHE.pop(next(iter(_TTS_AUDIO_CACHE)), None)
+        _TTS_AUDIO_CACHE[cache_key] = audio_bytes
         return HttpResponse(audio_bytes, content_type="audio/mpeg")
     except Exception as exc:
         return JsonResponse({"status": "error", "error": str(exc)}, status=500)
+
+
+@login_required
+def export_tax_audit_pdf(request):
+    """Exports official CA / Tax Audit summary PDF for the user."""
+    from tracker.reports import generate_tax_audit_pdf
+
+    account_id = request.GET.get("account")
+    parsed_acc_id = None
+    if account_id:
+        try:
+            parsed_acc_id = int(account_id)
+        except (ValueError, TypeError):
+            parsed_acc_id = None
+
+    pdf_bytes = generate_tax_audit_pdf(request.user, account_id=parsed_acc_id)
+    response = HttpResponse(pdf_bytes, content_type="application/pdf")
+    response["Content-Disposition"] = 'attachment; filename="SET_Tax_Audit_Summary.pdf"'
+    return response
+
+
+@login_required
+def export_transactions_csv(request):
+    """Exports filtered transactions to CSV format."""
+    import csv
+
+    base = Transaction.objects.filter(user=request.user).select_related("account", "statement")
+    ctx = _filter_context(request, request.user)
+    qs = apply_transaction_filters(base, ctx["filters"])
+
+    response = HttpResponse(content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="SET_Transactions_Export.csv"'
+
+    writer = csv.writer(response)
+    writer.writerow([
+        "Transaction ID", "Date", "Bank", "Account Number",
+        "Narration / Description", "Company / Vendor / Customer",
+        "Category", "AI Confidence",
+        "Debit (INR)", "Credit (INR)", "Balance (INR)",
+    ])
+
+    for t in qs:
+        writer.writerow([
+            t.id,
+            t.txn_date.isoformat() if t.txn_date else "",
+            t.account.bank_name if t.account else "Default Bank",
+            t.account.display_account if t.account else "N/A",
+            t.description,
+            t.entity_name,
+            t.category,
+            f"{float(t.confidence or 0.0):.2f}",
+            float(t.debit or 0.0),
+            float(t.credit or 0.0),
+            float(t.balance) if t.balance is not None else "",
+        ])
+    return response
+
+
+@login_required
+def export_transactions_excel(request):
+    """Exports filtered transactions to Excel (.xlsx) format."""
+    import io
+    import pandas as pd
+
+    base = Transaction.objects.filter(user=request.user).select_related("account", "statement")
+    ctx = _filter_context(request, request.user)
+    qs = apply_transaction_filters(base, ctx["filters"])
+
+    rows = []
+    for t in qs:
+        rows.append({
+            "Transaction ID": t.id,
+            "Date": t.txn_date.isoformat() if t.txn_date else "",
+            "Bank": t.account.bank_name if t.account else "Default Bank",
+            "Account Number": t.account.display_account if t.account else "N/A",
+            "Narration / Description": t.description,
+            "Company / Vendor / Customer": t.entity_name,
+            "Category": t.category,
+            "AI Confidence": round(float(t.confidence or 0.0), 2),
+            "Debit (INR)": float(t.debit or 0.0),
+            "Credit (INR)": float(t.credit or 0.0),
+            "Balance (INR)": float(t.balance) if t.balance is not None else None,
+        })
+
+    df = pd.DataFrame(rows)
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Transactions")
+
+    response = HttpResponse(
+        buffer.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = 'attachment; filename="SET_Transactions_Export.xlsx"'
+    return response
